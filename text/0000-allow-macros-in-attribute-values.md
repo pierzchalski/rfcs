@@ -65,7 +65,7 @@ Meta::NameValue(
 )
 ```
 
-As the implementor of the `HelloWorld` custom derive macro, you would need to check that instances of your custom attribute `HelloWorldName` were used correctly by checking the structures produced above. For instance, you may only allow the `#[name = "literal"]` attribute format. Looking at the documentation for `syn::Meta`, this corresponds to expecting a `NameValue` item after being parsed. Similarly, we can use this parsing result to extract configuration data from custom attributes. In this case, `lit` above corresponds to the right hand side of the equal sign in our custom attribute (`= "the best Pancakes"`).
+As the implementor of the `HelloWorld` custom derive macro, you would need to check that instances of your custom attribute `HelloWorldName` were used correctly by checking the structures produced above. For instance, you might only allow the `#[name = "literal"]` attribute format. Looking at the documentation for `syn::Meta`, this corresponds to expecting a `NameValue` item after being parsed. Similarly, we can use this parsing result to extract configuration data from custom attributes. In this case, `lit` above corresponds to the right hand side of the equal sign in our custom attribute (`= "the best Pancakes"`).
 
 ## Macros in Attributes
 [guide-complication]: #guide-complication

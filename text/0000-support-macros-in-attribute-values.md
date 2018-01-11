@@ -6,7 +6,7 @@
 # Summary
 [summary]: #summary
 
-Allow macros and meta-variables wherever an attribute expects a literal. For example:
+Allow macros wherever an attribute expects a literal. For example:
 
 ```rust
 #[path = concat!(env!("OUT_DIR"), "/hello.rs")]

@@ -180,7 +180,7 @@ There is existing infrastructure in the compiler to resolve macros from their na
 
 - Allowing `#[path = env!(...)]` and `#[cfg(feature = env!(...))]` means cargo now needs to track environment variables as part of its dependency information.
 
-- As discussed in the (comments)[https://github.com/rust-lang/rfcs/pull/1990#issuecomment-305323449] of the RFC for `#[doc(include = ...)]` syntax, using macros in attributes is less appealing and ergonomic than adding a new `key = "value"` option. Do we want to encourage this?
+- As discussed in the [comments](https://github.com/rust-lang/rfcs/pull/1990#issuecomment-305323449) of the RFC for `#[doc(include = ...)]` syntax, using macros in attributes is less appealing and ergonomic than adding a new `key = "value"` option. Do we want to encourage this?
 
 # Rationale and alternatives
 [alternatives]: #alternatives

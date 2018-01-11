@@ -20,6 +20,8 @@ When users are introduced to string literal macros like `concat!` and `include_s
 
 One desired use case was `#[doc(include_str!("path/to/doc.txt"))]` to allow ergonomically keeping documentation outside of Rust source files. This was eventually emulated by the accepted [RFC 1990](https://github.com/rust-lang/rfcs/pull/1990), indicating that macros in attributes could be used to solve problems at least important enough to go through the RFC process.
 
+For other attributes like `#[export_name = ...]` and `#[link_section = ...]`, without allowing macros as part of their definitions the only way to programmatically generate such attributes is either codegen (e.g. via `build.rs` and cargo) or an unfortunate amount of `macro_rules!` indirection. Neither of these is satisfactory or ergonomic.
+
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 

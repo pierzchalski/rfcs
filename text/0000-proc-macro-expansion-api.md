@@ -29,7 +29,7 @@ struct X {...}
 my_proc_macro!(concat!("hello", "world"));
 //             ^^^^^^^^^^^^^^^^^^^^^^^^^
 // This invocation isn't expanded before being passed to `my_proc_macro`, but could
-// be expanded if we chose to.
+// be expanded if we made that the default behaviour for proc macro calls.
 ```
 
 * In proc macros called with metavariables or token streams:
@@ -48,7 +48,7 @@ m!(concat!("a", "b", "c"));
 // how to expand.
 ```
 
-In these situations, proc macros need to either re-call the input macro invocation as part of their token output, or simply reject the input. If the proc macro needs to inspect the result of the macro invocation (for instance, to check or edit it, or to re-export a hygienic symbol defined in it), the author is currently unable to do so. This implies an additional place where a proc macro might encounter an unexpanded macro call, by _constructing_ it inside the definition:
+In these situations, proc macros need to either re-call the input macro invocation as part of their token output, or simply reject the input. If the proc macro needs to inspect the result of the macro invocation (for instance, to check or edit it, or to re-export a hygienic symbol defined in it), the author is currently unable to do so. This implies an additional place where a proc macro might encounter an unexpanded macro call, by _constructing_ it:
 
 * In a proc macro definition:
 
@@ -98,7 +98,7 @@ fn string_length(tokens: TokenStream) -> TokenStream {
 
 If you call `string_length!` with something obviously wrong, like `string_length!(struct X)`, you'll get a parser error when `unwrap` gets called, which is expected. But what do you think happens if you call `string_length!(stringify!(struct X))`?
 
-It's reasonable to expect that `stringify!(struct X)` gets expanded and turned into a string literal `"struct X"`, before being passed to `string_length`. However, in order to give the most control to proc macro authors, Rust doesn't touch any of the ingoing tokens passed to your proc macro (however, note the exceptions for [proc _attribute_ macros](#macro-calls-in-attribute-macros)).
+It's reasonable to expect that `stringify!(struct X)` gets expanded and turned into a string literal `"struct X"`, before being passed to `string_length`. However, in order to give the most control to proc macro authors, Rust doesn't touch any of the ingoing tokens passed to your proc macro (**Note:** this doesn't strictly hold true for [proc _attribute_ macros](#macro-calls-in-attribute-macros)).
 
 Thankfully, there's an easy solution: the proc macro API offered by the compiler has methods for constructing and expanding macro calls. The `syn` crate uses these methods to provide an alternative to `parse`, called `parse_expand`. As the name suggests, `parse_expand` parses the input token stream while expanding and parsing any encountered macro calls. Indeed, replacing `parse` with `parse_expand` in our definition of `string_length` means it will handle input like `stringify!(struct X)` seamlessly.
 

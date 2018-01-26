@@ -135,6 +135,7 @@ struct X {...}
 
 // Parses unsuccessfully: the normal Rust syntax for meta items doesn't
 // allow expressions here that don't evaluate to a literal.
+//                      vvvvvvvvvvvvvvvvvvvvvvvvv
 #[my_attr_macro(value = println!("Hello, world!"))]
 struct Y {...}
 ```

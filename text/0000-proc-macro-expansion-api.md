@@ -1,26 +1,70 @@
-- Feature Name: Support Macros in Attribute Values
-- Start Date: 2018-01-10
+- Feature Name: Macro Expansion API for Proc Macros
+- Start Date: 2018-01-26
 - RFC PR: (leave this empty)
 - Rust Issue: (leave this empty)
 
 # Summary
 [summary]: #summary
 
-Allow macros wherever an attribute expects a literal. For example:
-
-```rust
-#[path = concat!(env!("OUT_DIR"), "/hello.rs")]
-mod foo;
-```
+Add an API for procedural macros to expand resolvable macro definitions. This will allow proc macros to handle unexpanded macro invocations that are passed as inputs, as well as allow proc macros to access the results of invocations that they construct themselves.
 
 # Motivation
 [motivation]: #motivation
 
-When users are introduced to string literal macros like `concat!` and `include_str!`, they sometimes attempt to combine these with attributes. However, this natural progression currently leads to parser errors (see [rust-lang/rust#18849](https://github.com/rust-lang/rust/issues/18849) for an example).
+There are two areas where proc macros may encounter unexpanded macros in their input even after [rust/pull/41029](https://github.com/rust-lang/rust/pull/41029) is merged:
 
-One desired use case was `#[doc(include_str!("path/to/doc.txt"))]` to allow ergonomically keeping documentation outside of Rust source files. This was eventually emulated by the accepted [RFC 1990](https://github.com/rust-lang/rfcs/pull/1990), indicating that macros in attributes could be used to solve problems at least important enough to go through the RFC process.
+* In attribute macros:
 
-For other attributes like `#[export_name = ...]` and `#[link_section = ...]`, without allowing macros as part of their definitions the only way to programmatically generate such attributes is either codegen (e.g. via `build.rs` and cargo) or an unfortunate amount of `macro_rules!` indirection. Neither of these is satisfactory or ergonomic.
+```rust
+#[my_attr_macro(x = a_macro_invocation!(...))]
+//                  ^^^^^^^^^^^^^^^^^^^^^^^^
+// This invocation isn't expanded before being passed to `my_attr_macro`, and can't be
+// since attr macros are passed raw token streams by design.
+struct S { ... }
+```
+
+* In proc macros called with metavariables or token streams:
+
+```rust
+macro_rules! m {
+    ($($x:tt)*) => {
+        my_proc_macro!($($x)*);
+    },
+}
+
+m!(concat!("a", "b", "c"));
+// ^^^^^^^^^^^^^^^^^^^^^^
+// This invocation isn't expanded before being passed to `my_proc_macro`, and can't be
+// because `m!` is declared to take a token tree, not a parsed expression that we know
+// how to expand.
+```
+
+In these situations, proc macros need to either re-call the input macro invocation as part of their token output, or simply reject the input. If the proc macro needs to inspect the result of the macro invocation (for instance, to check or edit it, or to re-export and use a hygienic symbol defined in it), the author is currently unable to do so. This implies a third place a proc macro author might _construct_ an unexpanded macro invocation:
+
+* In a proc macro definition:
+
+```rust
+#[proc_macro]
+fn my_proc_macro(tokens: TokenStream) -> TokenStream {
+    let token_args = extract_from(tokens);
+    
+    // These arguments are a token stream, but they will be passed to `another_macro!`
+    // after being parsed as whatever `another_macro!` expects.
+    //                                                  vvvvvvvvvv
+    let other_tokens = some_other_crate::another_macro!(token_args);
+    //                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    // This invocation gets expanded into whatever `another_macro` expects to be expanded
+    // as. There is currently no way to get the resulting tokens without requiring the
+    // macro result to compile in the same crate as `my_proc_macro`.
+    ...
+}
+```
+
+Givin proc macro authors the ability to handle these situations will allow proc macros to 'just work' in more contexts, and without surprising users who expect macro invocations to interact well with _other_ invocations. Additionally, supporting the 'proc macro definition' use case above allows proc macro authors to use other crate macros without demanding that they be proc macros in turn.
+
+As a side note, allowing macro invocations in built-in attributes would solve a few outstanding issues (see [rust-lang/rust#18849](https://github.com/rust-lang/rust/issues/18849) for an example). 
+
+An older motivation to allow macro invocations in attributes was to get `#[doc(include_str!("path/to/doc.txt"))]` working, in order to provide an ergonomic way to keep documentation outside of Rust source files. This was eventually emulated by the accepted [RFC 1990](https://github.com/rust-lang/rfcs/pull/1990), indicating that macros in attributes could be used to solve problems at least important enough to go through the RFC process.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation

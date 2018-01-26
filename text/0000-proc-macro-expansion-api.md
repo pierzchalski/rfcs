@@ -23,6 +23,15 @@ There are two areas where proc macros may encounter unexpanded macros in their i
 struct S { ... }
 ```
 
+* In proc macros called normally:
+
+```rust
+my_proc_macro!(concat!("hello", "world"));
+//             ^^^^^^^^^^^^^^^^^^^^^^^^^
+// This invocation isn't expanded before being passed to `my_proc_macro`, but could
+// be expanded if we chose to.
+```
+
 * In proc macros called with metavariables or token streams:
 
 ```rust
@@ -60,7 +69,7 @@ fn my_proc_macro(tokens: TokenStream) -> TokenStream {
 }
 ```
 
-Givin proc macro authors the ability to handle these situations will allow proc macros to 'just work' in more contexts, and without surprising users who expect macro invocations to interact well with _other_ invocations. Additionally, supporting the 'proc macro definition' use case above allows proc macro authors to use other crate macros without demanding that they be proc macros in turn.
+Giving proc macro authors the ability to handle these situations will allow proc macros to 'just work' in more contexts, and without surprising users who expect macro invocations to interact well with _other_ invocations. Additionally, supporting the 'proc macro definition' use case above allows proc macro authors to use other crate macros without demanding that they be proc macros in turn.
 
 As a side note, allowing macro invocations in built-in attributes would solve a few outstanding issues (see [rust-lang/rust#18849](https://github.com/rust-lang/rust/issues/18849) for an example). 
 
@@ -68,6 +77,30 @@ An older motivation to allow macro invocations in attributes was to get `#[doc(i
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
+
+## Macro Invocations in Proc Macros
+[guide-invocations]: #guide-invocations
+
+When implementing proc macros you should account for the possibility that a user might provide a macro invocation in their input. For example, here's a silly proc macro that evaluates to the length of a string:
+
+```rust
+extern crate syn;
+#[macro_use]
+extern crate quote;
+
+#[proc_macro]
+fn string_length(tokens: TokenStream) -> TokenStream {
+    let str_lit: syn::LitStr = syn::parse(tokens).unwrap();
+    let str_val = str_lit.value();
+    let str_len = str_val.len();
+    
+    quote!(#str_len)
+}
+```
+
+If you call `string_length` with something obviously wrong, like `string_length!(let x = 5;)`, you'll get a parser error when `unwrap` gets called, which makes sense. But what do you think happens if you call `string_length!(stringify!(let x = 5;))`?
+
+It's not unreasonable to expect that `stringify!` gets expanded and turned into a string literal `"let x = 5;"`, before being passed to `string_length`. However, in order to give the most amount of control to proc macro authors,  
 
 ## Attributes As Macros
 [guide-attributes]: #guide-attributes

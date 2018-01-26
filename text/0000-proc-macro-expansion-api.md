@@ -11,7 +11,7 @@ Add an API for procedural macros to expand resolvable macro definitions. This wi
 # Motivation
 [motivation]: #motivation
 
-There are two areas where proc macros may encounter unexpanded macros in their input even after [rust/pull/41029](https://github.com/rust-lang/rust/pull/41029) is merged:
+There are a few places where proc macros may encounter unexpanded macros in their input even after [rust/pull/41029](https://github.com/rust-lang/rust/pull/41029) is merged:
 
 * In attribute macros:
 
@@ -20,7 +20,7 @@ There are two areas where proc macros may encounter unexpanded macros in their i
 //                  ^^^^^^^^^^^^^^^^^^^^^^^^
 // This invocation isn't expanded before being passed to `my_attr_macro`, and can't be
 // since attr macros are passed raw token streams by design.
-struct S { ... }
+struct X {...}
 ```
 
 * In proc macros called normally:
@@ -48,7 +48,7 @@ m!(concat!("a", "b", "c"));
 // how to expand.
 ```
 
-In these situations, proc macros need to either re-call the input macro invocation as part of their token output, or simply reject the input. If the proc macro needs to inspect the result of the macro invocation (for instance, to check or edit it, or to re-export and use a hygienic symbol defined in it), the author is currently unable to do so. This implies a third place a proc macro author might _construct_ an unexpanded macro invocation:
+In these situations, proc macros need to either re-call the input macro invocation as part of their token output, or simply reject the input. If the proc macro needs to inspect the result of the macro invocation (for instance, to check or edit it, or to re-export a hygienic symbol defined in it), the author is currently unable to do so. This implies an additional place where a proc macro might encounter an unexpanded macro call, by _constructing_ it inside the definition:
 
 * In a proc macro definition:
 
@@ -78,10 +78,9 @@ An older motivation to allow macro invocations in attributes was to get `#[doc(i
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-## Macro Invocations in Proc Macros
-[guide-invocations]: #guide-invocations
+## Macro Calls in Procedural Macros
 
-When implementing proc macros you should account for the possibility that a user might provide a macro invocation in their input. For example, here's a silly proc macro that evaluates to the length of a string:
+When implementing procedural macros you should account for the possibility that a user might provide a macro call in their input. For example, here's a silly proc macro that evaluates to the length of the string literal passed in.:
 
 ```rust
 extern crate syn;
@@ -90,20 +89,76 @@ extern crate quote;
 
 #[proc_macro]
 fn string_length(tokens: TokenStream) -> TokenStream {
-    let str_lit: syn::LitStr = syn::parse(tokens).unwrap();
-    let str_val = str_lit.value();
-    let str_len = str_val.len();
+    let lit: syn::LitStr = syn::parse(tokens).unwrap();
+    let len = str_lit.value().len();
     
-    quote!(#str_len)
+    quote!(#len)
 }
 ```
 
-If you call `string_length` with something obviously wrong, like `string_length!(let x = 5;)`, you'll get a parser error when `unwrap` gets called, which makes sense. But what do you think happens if you call `string_length!(stringify!(let x = 5;))`?
+If you call `string_length!` with something obviously wrong, like `string_length!(struct X)`, you'll get a parser error when `unwrap` gets called, which is expected. But what do you think happens if you call `string_length!(stringify!(struct X))`?
 
-It's not unreasonable to expect that `stringify!` gets expanded and turned into a string literal `"let x = 5;"`, before being passed to `string_length`. However, in order to give the most amount of control to proc macro authors,  
+It's reasonable to expect that `stringify!(struct X)` gets expanded and turned into a string literal `"struct X"`, before being passed to `string_length`. However, in order to give the most control to proc macro authors, Rust doesn't touch any of the ingoing tokens passed to your proc macro (however, note the exceptions for [proc _attribute_ macros](#macro-calls-in-attribute-macros)).
+
+Thankfully, there's an easy solution: the proc macro API offered by the compiler has methods for constructing and expanding macro calls. The `syn` crate uses these methods to provide an alternative to `parse`, called `parse_expand`. As the name suggests, `parse_expand` parses the input token stream while expanding and parsing any encountered macro calls. Indeed, replacing `parse` with `parse_expand` in our definition of `string_length` means it will handle input like `stringify!(struct X)` seamlessly.
+
+As a utility, `parse_expand` uses sane expansion options for the most common case of macro calls in token stream inputs. It assumes:
+
+* The called macro, as well as any identifiers in its arguments, is in scope at the macro call site.
+* The called macro should behave as though it were expanded in the source location.
+
+To understand what these assumptions mean, or how to expand a macro differently, check out [this section](#spans-scopes-hygiene-and-macros).
+
+## Macro Calls in Attribute Macros
+
+Macro calls also show up in attribute macros. The situation is very similar to that of proc macros: `syn` offers `parse_meta_expand` in addition to `parse_meta`. This can be used to parse the attribute argument tokens, assuming your macro expects a normal meta-item and not some fancy custom token tree. For instance, the following behaves as expected:
+
+```rust
+// In definition crate `my_am`:
+#[proc_macro_attribute]
+fn my_attr_macro(attr: TokenStream, subject: TokenStream) -> TokenStream {
+    let meta = syn::parse_meta_expand(attr).unwrap();
+    ...
+}
+```
+```rust
+// In user crate:
+extern crate my_am;
+use my_am::my_attr_macro;
+
+// Parses successfully: `my_attr_macro` behaves as though called with
+// ``my_attr_macro(value = "Hello, world!")]
+// struct X {...}
+//                      vvvvvvvvvvvvvvvvvvvvvvvvvvvv
+#[my_attr_macro(value = concat!("Hello, ", "world!"))]
+struct X {...}
+
+// Parses unsuccessfully: the normal Rust syntax for meta items doesn't
+// allow expressions here that don't evaluate to a literal.
+#[my_attr_macro(value = println!("Hello, world!"))]
+struct Y {...}
+```
+
+Of course, even if your attribute macro _does_ use a fancy token syntax, you can still use `parse_expand` to handle any macro calls you encounter.
+
+**Note:** Because the built-in attribute 'macro' `#[cfg]` is expanded and evaluated before body tokens are sent to an attribute macro, the compiler will also expand any other macros before then too for consistency. For instance, here `my_attr_macro!` will see `field: u32` instead of a call to `type_macro!`:
+
+```rust
+macro_rules! type_macro {
+    () => { u32 };
+}
+
+#[my_attr_macro(...)]
+struct X {
+    field: type_macro!(),
+}
+```
+
+## Spans, Scopes, Hygiene, and Macros
+[guide-sshm]: guide-sshm
 
 ## Attributes As Macros
-[guide-attributes]: #guide-attributes
+[guide-aff]: #guide-aff
 
 Attributes are annotations of the form `#[name(args...)]` that are included just above various item declarations, or of the form `#![name(args...)]` at the top of a module.
 

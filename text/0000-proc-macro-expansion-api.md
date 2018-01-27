@@ -107,22 +107,22 @@ As a utility, `parse_expand` uses sane expansion options for the most common cas
 * The called macro, as well as any identifiers in its arguments, is in scope at the macro call site.
 * The called macro should behave as though it were expanded in the source location.
 
-To understand what these assumptions mean, or how to expand a macro differently, check out [this section](#spans-scopes-hygiene-and-macros).
+To understand what these assumptions mean, or how to expand a macro differently, check out the section on how [hygiene works](#spans-and-scopes) as well as the detailed [API overview](#api-overview).
 
 ## Macro Calls in Attribute Macros
 
 Macro calls also show up in attribute macros. The situation is very similar to that of proc macros: `syn` offers `parse_meta_expand` in addition to `parse_meta`. This can be used to parse the attribute argument tokens, assuming your macro expects a normal meta-item and not some fancy custom token tree. For instance, the following behaves as expected:
 
 ```rust
-// In definition crate `my_am`:
+// Definition crate `my_am`:
 #[proc_macro_attribute]
-fn my_attr_macro(attr: TokenStream, subject: TokenStream) -> TokenStream {
-    let meta = syn::parse_meta_expand(attr).unwrap();
+fn my_attr_macro(attr: TokenStream, body: TokenStream) -> TokenStream {
+    let meta: Syn::Meta = syn::parse_meta_expand(attr).unwrap();
     ...
 }
 ```
 ```rust
-// In user crate:
+// Use crate:
 extern crate my_am;
 use my_am::my_attr_macro;
 
@@ -133,8 +133,8 @@ use my_am::my_attr_macro;
 #[my_attr_macro(value = concat!("Hello, ", "world!"))]
 struct X {...}
 
-// Parses unsuccessfully: the normal Rust syntax for meta items doesn't
-// allow expressions here that don't evaluate to a literal.
+// Parses unsuccessfully: the normal Rust syntax for meta items expects
+// a literal, not an expression.
 //                      vvvvvvvvvvvvvvvvvvvvvvvvv
 #[my_attr_macro(value = println!("Hello, world!"))]
 struct Y {...}
@@ -155,197 +155,85 @@ struct X {
 }
 ```
 
-## Spans, Scopes, Hygiene, and Macros
+## Spans and Scopes
 [guide-sshm]: guide-sshm
 
-## Attributes As Macros
-[guide-aff]: #guide-aff
-
-Attributes are annotations of the form `#[name(args...)]` that are included just above various item declarations, or of the form `#![name(args...)]` at the top of a module.
-
-An attribute is either provided by a crate as part of a procedural macro, or is defined by the language. In both cases, the attribute is treated similarly to a macro, in that it is passed its arguments in the form of a token tree and it is the responsibility of the attribute definition to parse and interpret these as intended.
-
-As an example, consider implementing a custom `#[derive(HelloWorld)]` procedural macro as discused in [the book](https://doc.rust-lang.org/book/first-edition/procedural-macros.html). In the section on [custom attributes](https://doc.rust-lang.org/beta/book/first-edition/procedural-macros.html#custom-attributes), we see how to extend Rust to allow a custom attribute `HelloWorldName`, used as follows:
+If you're not familiar with how spans are used in token streams to track both line/column data and name resolution scopes, here is a refresher:
 
 ```rust
-#[derive(HelloWorld)]
-#[HelloWorldName = "the best Pancakes"]
-struct Pancakes;
-```
-
-If you were using the [`syn`](https://github.com/dtolnay/syn) crate to parse the Rust syntax tree passed to your procedural macro, that custom attribute would be parsed as an instance of [`syn::Attribute`](https://docs.rs/syn/0.12/syn/struct.Attribute.html) which could be further parsed into an instance of [`syn::Meta`](https://docs.rs/syn/0.12/syn/enum.Meta.html).
-
-Here is an example. We use the [`quote`](https://github.com/dtolnay/quote) crate to jump right into the parsing instead of going via a procedural macro, at the cost of having to use [`proc_macro2`](https://github.com/alexcrichton/proc-macro2) to hand-make our own AST.
-
-```rust
-extern crate syn;
-#[macro_use] extern crate quote;
-extern crate proc_macro2;
-
-use syn::*;
-
-fn main() {
-
-    let tokens = quote! {
-        #[HelloWorldName = "the best Pancakes"]
-        struct Pancakes;
-    };
-    
-    let struct: ItemStruct = parse2(tokens.into()).unwrap();
-    let attribute = &struct.attrs[0];
-    let parsed_attribute = attribute.interpret_meta().unwrap();
-    let dummy_span = proc_macro2::Span::call_site();
-    
-    assert_eq!(
-        parsed_attribute,
-        Meta::NameValue(MetaNameValue {
-        
-            // Corresponds to the identifier in the left hand side of the equals sign in
-            // #[HelloWorldName = "the best Pancakes"]
-            ident: Ident::new("HelloWorldName", dummy_span),
-            
-            // The equals sign. Not interesting here but useful when reconstructing an AST
-            // for reporting errors.
-            eq_token: token::Eq::new(dummy_span),
-            
-            // Corresponds to the string literal in the right hand side of the equals sign.
-            lit: Lit::Str(LitStr::new("the best Pancakes", dummy_span)),
-            
-        })
-    );
+// Definition crate `my_pm`
+#[proc_macro]
+fn my_proc_macro(tokens: TokenStream) -> TokenStream {
+    // The tokens in lines marked [Def] have spans with scopes that indicate
+    // they should be interpreted as though they were defined here
+    // in the macro definition (because they were!).
+    //
+    // The tokens in lines marked with [Call] keep their original scopes,
+    // which in this case indicate they should be interpreted as though they
+    // were defined at the macro call site.
+    quote! {            
+        let mut x = 0;  // [Def]
+        #tokens         // [Call]
+        x += 1;         // [Def]
+    }
 }
 ```
 
-As the implementor of the `HelloWorld` custom derive macro, you would need to check that instances of your custom attribute `HelloWorldName` were used correctly by checking the structures produced above. For instance, you might only allow the `#[name = "literal"]` attribute format. Looking at the documentation for `syn::Meta`, this corresponds to expecting a `NameValue` item after being parsed, as we see above.
-
-## Macros in Attributes
-[guide-complication]: #guide-complication
-
-There is one uncommon, but not unexpected complications to the above story of how to parse attributes. Someone using your custom attribute might pass a macro invocation instead of a literal:
-
 ```rust
-#[derive(HelloWorld)]
-#[HelloWorldName = env!("HELLO_WORLD_NAME")]
-struct Pancakes;
-```
-
-Recalling our previous [example](#guide-attributes), we see that our parsed syntax tree would have changed:
-
-```rust
-    assert_eq!(
-        parsed_attribute,
-        Meta::NameValue(MetaNameValue {
-            // These are unchanged...
-            ident: Ident::new("HelloWorldName", dummy_span),
-            eq_token: token::Eq::new(dummy_span),
-            
-            // Corresponds to the macro invocation.
-            lit: Lit::Macro(syn::Macro {
-                // Specifies the name of the macro. This is hiding a lot of complexity - see `Path`
-                // in `syn` for more.
-                path: parse2(quote!(env).into()).unwrap(),
-                
-                // These two aren't very interesting, similar to eq_token above.
-                bang_token: Bang::new(dummy_span),
-                delimiter: MacroDelimiter::Paren(Paren(dummy_span)),
-                
-                // The arguments to the macro. These are represented as just a raw token stream,
-                // which conveniently is what `quote!` returns.
-                tts: quote!("HELLO_WORLD_NAME").into(),
-            }),
-        })
-    );
-```
-
-Notice that our literal has been replaced with a macro invocation. In order to handle this complication, we need a way to turn that macro into whatever it will be expanded into, so that we can get the resulting literal expression and use it in the rest of our procedural macro (What if the macro doesn't expand into a string literal? Check out [raising errors](https://doc.rust-lang.org/beta/book/first-edition/procedural-macros.html#raising-errors)!). To do this, we need a new tool: the _expansion_ API.
-
-Inside of a procedural macro implementation, the `proc_macro` crate has access to all the macro definitions that are in scope when your procedural macro is called. It keeps the details of this scope tracking out-of-sight but provides one function, `expand: TokenStream -> Result<TokenStream>`, which takes in a token stream for a macro invocation and returns a token stream for the result (notice the similarity to the procedural macro interface that your custom implementation also provides!).
-
-## Using Expansions
-
-Say we extracted the macro invocation part of the AST in our previous example, into a variable `mac`. Here is how we use `expand` to turn it into something more useful to us (in this case, a string literal):
-
-```rust
-extern crate proc_macro;
-use proc_macro::expand;
+// Use crate
+extern crate my_pm;
 
 fn main() {
-    ...
-    let mac = <our Lit::Macro node from above>;
-    let mac_tokens = quote!(#mac).into();
-    
-    let mac_result = expand(mac_tokens)
-            .expect("Failed to expand macro invocation!");
-    
-    let lit: Lit = parse2(mac_result)
-            .expect("Failed to parse macro result as a literal!");
-            
-    match lit {
-        Lit::Str(lit) => {
-            // Success! `lit` is a `LitStr` we can use in our macro implementation.
-        },
-        other => {
-            // In this case, the provided macro didn't expand into a literal - 
-            // here you can report what happened to the user.
-        },
-    }
+    my_pm::my_proc_macro! {
+        let mut x = 1;
+        x += 2;
+    };
+    println!(x);
+}
 ```
 
-## Built-In Attributes
-[guide-builtin]: #guide-builtin
+The call to `my_proc_macro!` in `main` expands `main` to something like this:
 
-Some attributes, like `#[path]` and `#[doc]`, are defined as part of the Rust language and are implemented by the compiler. However, they work very similarly to the process outlined above, and so you can use macro invocations in these with no issues.
+```rust
+fn main() {        //    [Call]
+    let mut x = 0; // 1. [Def]
+    let mut x = 1; // 2. [Call]
+    x += 2;        // 3. [Call]
+    x += 1;        // 4. [Def]
+    println!(x);   // 5. [Call]
+}                  //    [Call]
+```
+
+As you can see, the macro expansion has interleaved tokens provided by the caller (marked with `[Call]`) and tokens provided by the macro definition (marked with `[Def]`). 
+
+Each mark corresponds to a different _scope_ which is used to define names. That means lines 1 and 2 above each define a variable named `x` but living in a different name resolution scope. This in turn means that the `x` defined in line 2 isn't shadowing the `x` defined in line 1, which is what would happen if these variables were all declared in a single scope.
+
+Scopes are also used to _resolve_ names. In lines 3 and 5 the variable `x` is in the `[Call]` scope, and so will resolve to the variable declared in line 2. Similarly, in line 4 the variable `x` is in the `[Def]` scope, and so will resolve to the variable declared in line 1. This means mutating a variable in one scope doesn't mutate the variables in another, which is how Rust achieves macro hygiene. Letting `[Scope]x` be shorthand for "the variable `x` resolved in the scope `Scope`":
+
+```rust
+fn main() {
+    let mut x = 0; // vars = [Def]x; [Def]x = 0;
+    let mut x = 1; // vars = [Def]x, [Call]x; [Call]x = 1;
+    x += 2;        // [Call]x = 3;
+    x += 1;        // [Def]x = 2;
+    println!(x);   // Prints [Call]x;
+}
+```
+
+This doesn't just stop at variable names. The above principles apply to mods, structs, trait definition, trait method calls, macros - anything with a name which needs to be looked up. There are even some interesting [examples](https://github.com/dtolnay/syn/blob/030787c71b4cfb2764bccbbd2bf0e8d8497d46ef/examples/heapsize2/heapsize_derive/src/lib.rs#L65) of how this gets used to resolve method calls on traits declared in `[Def]`, but called with variables from `[Call]`.
+
+## API Overview
+
+The full API provided by `proc_macro` and used by `syn` is more flexible than suggested by the use of `parse_expand` and `parse_meta_expand` above. 
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-The changes suggested by this RFC, as seen above, are:
-- Extending the 'conventional' attribute grammar [described](https://docs.rs/syn/0.12/syn/struct.Attribute.html#syntax) in syn and in the compiler's AST, namely allowing [macro](https://docs.rs/syn/0.12/syn/struct.Macro.html) nodes wherever a literal is expected.
-- Exposing a minimal API to user-defined procedural macros that allows expansion of macro invocations.
-- Changing the built-in language attributes (as listed in the [reference](https://docs.rs/syn/0.12/syn/struct.Macro.html)) to similarly expand macro invocations in literal position.
-
-Since macro definitions are added into the global scope as they are encountered in lexical order, any legal invocation will already be in scope for attributes like `#[path = ...]` and `#[cfg(...)]`. This means we don't need to worry about any [Russel's paradox](https://en.wikipedia.org/wiki/Russell%27s_paradox) issues where a macro prevents itself from being defined or in scope.
-
-There is existing infrastructure in the compiler to resolve macros from their names to their definitions, and to expand invocations into their results. Parsing the token stream passed to `expand`, and tokenising the result, satisfies the required API.
-
 # Drawbacks
 [drawbacks]: #drawbacks
-
-- Making it easier to programmatially control things like module locations may lead to 'code smells' like the example in the [summary](#summary).
-
-- Allowing `#[path = env!(...)]` and `#[cfg(feature = env!(...))]` means cargo now needs to track environment variables as part of its dependency information.
-
-- As discussed in the [comments](https://github.com/rust-lang/rfcs/pull/1990#issuecomment-305323449) of the RFC for `#[doc(include = ...)]` syntax, using macros in attributes is less appealing and ergonomic than adding a new `key = "value"` option. Do we want to encourage this?
 
 # Rationale and alternatives
 [alternatives]: #alternatives
 
-- This is a problem that users will naturally encounter as their familiarity with macros and attributes increases. That this suddenly doesn't work is unexpected.
-- After [rust-lang/rust#42164](https://github.com/rust-lang/rust/issues/42164) was fixed (some time before [rust-lang/rust/pull/47014](https://github.com/rust-lang/rust/pull/47014)), the 'trick' of indirectly using macro invocations through a layer of macro indirection now works:
-
-```rust
-macro_rules! linked {
-  ($name:ident, $link_name:expr) => {
-    #[link_section = $link_name]
-    pub static $name: usize = 0;
-  }
-}
-
-linked!(X, ".section_for_X");
-linked!(Y, concat!(".section_for_", stringify!(Y)));
-```
-
-- We could choose that this be the accepted way of handling this combination of features. This is an uncomfortable friction whenever someone runs into it, and it feels like boilerplate for no benefit.
-
-- We could delay providing a way for procedural macros to expand macro invocations and metavariables, instead just supporting them in a subset of built-in attributes.
-
 # Unresolved questions
 [unresolved]: #unresolved-questions
-
-- What should a procedural macro API for macro invocation/metavariable expansion look like?
-  - Should the macro scope and resolution information be hidden global state, as hypothesised [above](#guide-complication)? Should it be passed around as an opaque `Scope` struct, in preparation for a more expressive future API?
-  - How would a third party implement something like `proc_macro2` for `expand`? Is there enough infrastructure in stable Rust to emulate it?
-  - The `proc_macro2` crate is usable from outside a proc macro crate. Combined with `syn` and `quote` this makes exploring syntax manipulations very approachable, since we can simply set up a normal cargo binary project instead of a proc macro definition crate plus a proc macro caller crate.
-  - How does this interact with the recent work on proc macro hygeine?
-
-- Do we need to document how macros are implemented in more detail? How was [rust-lang/rust#42164](https://github.com/rust-lang/rust/issues/42164) resolved - in particular, what did it change about how metavariables are handled? Why doesn't it work for procedural macros ([issue pending](https://github.com/rust-lang/rust/issues/42164#issuecomment-355802889))?

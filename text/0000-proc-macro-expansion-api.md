@@ -330,6 +330,7 @@ This proposal:
 * Relies on proc macro authors doing macro expansion. This might partition the macro ecosystem into expansion-ignoring (where input macro calls are essentially forbidden for any part of the input that needs to be inspected) and expansion-handling (where they work fine _as long as_ the proc macro author has used the expansion API correctly).
 
 * Leads to frustrating corner-cases involving macro paths. For instance, consider the following:
+
 ```rust
 macro baz!(...);
 foo! {
@@ -338,16 +339,19 @@ foo! {
     }
 }
 ```
-he caller of `foo!` probably imagines that `baz!` will be expanded within `b`, and so prepends the call with `super`. However, if `foo!` naively calls `parse_expand` with this input then `super::baz!` will fail to resolve because macro paths are resolved relative to the location of the call. Handling this would require `parse_expand` to track the path offset of its expansion, which is doable but adds complexity.
+
+* The caller of `foo!` probably imagines that `baz!` will be expanded within `b`, and so prepends the call with `super`. However, if `foo!` naively calls `parse_expand` with this input then `super::baz!` will fail to resolve because macro paths are resolved relative to the location of the call. Handling this would require `parse_expand` to track the path offset of its expansion, which is doable but adds complexity.
 
 * Can't handle macros that are defined in the input, such as:
+
 ```rust
 foo! {
     macro bar!(...);
     bar!(hello, world!);
 }
 ```
-Handling this would require adding more machinery to `proc_macro`, something along the lines of `add_definition(scope, path, tokens)`. Is this necessary for a minimum viable proposal? 
+
+* Handling this would require adding more machinery to `proc_macro`, something along the lines of `add_definition(scope, path, tokens)`. Is this necessary for a minimum viable proposal? 
 
 # Rationale and alternatives
 [alternatives]: #alternatives

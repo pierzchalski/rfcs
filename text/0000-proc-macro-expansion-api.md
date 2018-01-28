@@ -152,6 +152,8 @@ struct X {
 ## Spans and Scopes
 [guide-sshm]: guide-sshm
 
+**Note:** This isn't part of the proposed changes, but is useful for setting up the language for understanding proc macro expansion.
+
 If you're not familiar with how spans are used in token streams to track both line/column data and name resolution scopes, here is a refresher. Consider the following proc macro:
 
 ```rust
@@ -274,7 +276,7 @@ impl MacroCall {
     
     fn new_attr(path: TokenStream, args: TokenStream, body: TokenStream) -> Self;
     
-    fn call_from(self, span_from: Span) -> Self;
+    fn call_from(self, from: Span) -> Self;
     
     fn expand(self) -> Result<TokenStream, Diagnostic>;
 }
@@ -286,7 +288,10 @@ The `args` tokens are passed as the main input to proc macros, and as the attrib
 
 The method `call_from` is a builder-pattern method to set what the calling scope is for the macro.
 
-The method `expand` consumes the macro call, resolves the definition, applies it to the provided input in the configured expansion setting, and returns the resulting token tree or a failure diagnostic.
+The method `expand` consumes the macro call, resolves the definition, applies it to the provided input in the configured expansion setting, and returns the resulting token tree or a failure diagnostic. For resolution:
+
+* If the scope of `path` is anywhere other than that of `Span::def_site()`, then the macro definition is resolved in that scope.
+* If the scope of `path` is that of `Span::def_site()`, then the macro definition is resolved in the crate defining the current macro (as opposed to being resolved using the imports in the token stream _produced by_ the current macro). This allows proc macros to expand macros from crates that aren't available to or provided by the caller.
 
 ### Calling Scopes
 
@@ -303,11 +308,65 @@ However, if `foo!` is _unhygienic_ then the choice of `[foo.Call]` might matter 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
+The proposed additions to the proc macro API in `proc_macro` are outlined above in the [API overview](#api-overview). Here we focus on technical challenges.
+
+When a source file is parsed any `macro_rules!` and `macro` definitions get added to a definition map long before the first macro is expanded. Procedural macros currently need to live in a separate crate, and it seems they will for a while. This means that _in principle_ any macro call that would resolve in the caller's scope should be available to resolve at the time the proc macro is expanded.
+
+Built-in macros already look more and more like proc macros (or at the very least could be massaged into acting like them), and so they can also be added to the definition map.
+
+Since proc macros and `macro` definitions are relative-path-addressable, the proc macro call context needs to keep track of what the path was at the call site. I'm not sure if this information is available at expansion time, but are there any issues getting it?
+
 # Drawbacks
 [drawbacks]: #drawbacks
+
+This proposal:
+
+* Increases the API surface of `proc_macro` and any crate trying to emulate it. In fact, since it requires actually evaluating macro calls it isn't clear how a third-party crate like `proc_macro2` could even try to emulate it.
+
+* Greatly increases the potential for hairy interactions between macro calls. This opens up more of the implementation to be buggy (that is, by restricting how macros can be expanded, we might keep implementation complexity in check).
+
+* Relies on proc macros being in a separate crate, as discussed in the reference level explanation [above](#reference-level-explanation). This makes it harder to implement any future plans of letting proc macros be defined and used in the same crate.
+
+* Relies on proc macro authors doing macro expansion. This might partition the macro ecosystem into expansion-ignoring (where input macro calls are essentially forbidden for any part of the input that needs to be inspected) and expansion-handling (where they work fine _as long as_ the proc macro author has used the expansion API correctly).
+
+* Leads to frustrating corner-cases involving macro paths. For instance, consider the following:
+```rust
+macro baz!(...);
+foo! {
+    mod b {
+        super::baz!();
+    }
+}
+```
+he caller of `foo!` probably imagines that `baz!` will be expanded within `b`, and so prepends the call with `super`. However, if `foo!` naively calls `parse_expand` with this input then `super::baz!` will fail to resolve because macro paths are resolved relative to the location of the call. Handling this would require `parse_expand` to track the path offset of its expansion, which is doable but adds complexity.
+
+* Can't handle macros that are defined in the input, such as:
+```rust
+foo! {
+    macro bar!(...);
+    bar!(hello, world!);
+}
+```
+Handling this would require adding more machinery to `proc_macro`, something along the lines of `add_definition(scope, path, tokens)`. Is this necessary for a minimum viable proposal? 
 
 # Rationale and alternatives
 [alternatives]: #alternatives
 
+The primary rationale is to make proc macros work more smoothly with other features of Rust - mainly other macros.
+
+Recalling the examples listed in [Motivation](#motivation) above, a few but not all situations of proc macros receiving unexpanded macro calls could be avoided by changing the general 'hands off' attitude towards proc macros and attribute macros, and more aggressively parse and expand their inputs. This effectively bans macro calls as part of the input grammar, which seems drastic, and wouldn't handle cases of indirection via token tree (`$x:tt`) parameters.
+
+We could encourage the creation of a 'macros for macro authors' crate with implementations of common macros - for instance, those in the standard library - and make it clear that macro support isn't guaranteed for arbitrary macro calls passed in to proc macros. This feels unsatisfying, since it fractures the macro ecosystem and leads to very indirect unexpected behaviour (for instance, if one proc macro uses a different macro expansion library than another, and they return different results). This also doesn't help address macro calls in built-in attributes.
+
 # Unresolved questions
 [unresolved]: #unresolved-questions
+
+The details of the `MacroCall` API need more thought and discussion:
+
+* Do we need a separate configurable `Context` argument that specifies how scopes are resolved, combined with a `resolve_in(self, ctx: Context)` method?
+
+* Is `call_from` necessary? Are there any known uses, or could it be emulated by patching the spans of the called macro result?
+
+* This API allows for a first-pass solution to the problems listed in [Motivation](#motivation). Does it interfere with any known uses of proc macros? Does it prevent any existing techniques from working or cut off potential future ones?
+
+* Are there any reasonable cases where someone can reasonably call a macro, but the resolution of that macro's path isn't possible until later?

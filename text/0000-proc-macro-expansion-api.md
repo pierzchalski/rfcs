@@ -67,7 +67,7 @@ fn my_proc_macro(tokens: TokenStream) -> TokenStream {
 }
 ```
 
-Giving proc macro authors the ability to handle these situations will allow proc macros to 'just work' in more contexts, and without surprising users who expect macro calls to interact well with _other_ calls. Additionally, supporting the 'proc macro definition' use case above allows proc macro authors to use other crate macros without demanding that they be proc macros in turn.
+Giving proc macro authors the ability to handle these situations will allow proc macros to 'just work' in more contexts, and without surprising users who expect macro calls to interact well with more parts of the language. Additionally, supporting the 'proc macro definition' use case above allows proc macro authors to use macros from other crates _as macros_, rather than as proc macro definition functions.
 
 As a side note, allowing macro calls in built-in attributes would solve a few outstanding issues (see [rust-lang/rust#18849](https://github.com/rust-lang/rust/issues/18849) for an example). 
 
@@ -262,7 +262,41 @@ There are also some interesting [examples](https://github.com/dtolnay/syn/blob/0
 
 ## API Overview
 
-The full API provided by `proc_macro` and used by `syn` is more flexible than suggested by the use of `parse_expand` and `parse_meta_expand` above. 
+The full API provided by `proc_macro` and used by `syn` is more flexible than suggested by the use of `parse_expand` and `parse_meta_expand` above. To begin, `proc_macro` defines a struct, `MacroCall`, with the following interface:
+
+```rust
+struct MacroCall {...};
+
+impl MacroCall {
+    fn new_proc(path: TokenStream, args: TokenStream) -> Self;
+    
+    fn new_attr(path: TokenStream, args: TokenStream, body: TokenStream) -> Self;
+    
+    fn call_from(self, span_from: Span) -> Self;
+    
+    fn expand(self) -> Result<TokenStream, Diagnostic>;
+}
+```
+
+The functions `new_proc` and `new_attr` create a procedural macro call and an attribute macro call, respectively. Both expect `path` to parse as a [path](https://docs.rs/syn/0.12/syn/struct.Path.html) like `println` or `::std::println`. The scope of the spans of `path` are used to resolve the macro definition. This is unlikely to work unless all the tokens have the same scope.
+
+The `args` tokens are passed as the main input to proc macros, and as the attribute input to attribute macros (the `things` in `#[my_attr_macro(things)]`). The `body` tokens are passed as the body input to attribute macros (the `struct Foo {...}` in `#[attr] struct Foo {...}`). Remember that the body of an attribute macro usually has any macro calls inside it expanded _before_ being passed to the attribute macro itself.
+
+The method `call_from` is a builder-pattern method to set what the calling scope is for the macro.
+
+The method `expand` consumes the macro call, resolves the definition, applies it to the provided input in the configured expansion setting, and returns the resulting token tree or a failure diagnostic.
+
+### Calling Scopes
+
+The method `call_from` is a builder-pattern method to set what the calling scope is for the macro. What does this mean?
+
+Say we are defining a macro `my_proc` and `my_proc` gets called with another macro `foo!` as input, perhaps as `my_proc!(foo!())`.
+
+Recall that in a macro definition there are two scopes of interest: the caller site (produced with `Span::call_site()` and annotated in this chapter with `[Call]`), and the macro definition site (produced with `Span::def_site()` and annotated with `[Def]`). Change how we mark the original caller scope from just `[Call]` to `[my_proc.Call]` and the definition scope to `[my_proc.Def]`. Mark the equivalent scopes for `foo` as `[foo.Call]` and `[foo.Def]`. Now should `[foo.Call]` be the same as `[my_proc.Call]` or `[my_proc.Def]`? Phrased differently, should we treat `foo` as called 'within' `my_proc`, or as being called separately where `my_proc` was called from?
+
+In most cases, `foo!` is hygienic and so the choice doesn't matter - wherever `foo!` is called, all of its new variables and modules and whatever will live in `[foo.Def]` independent of what `[foo.Call]` is. Additionally, for hygiene reasons, every call of every macro has a different `[Def]` scope, and so we don't have to worry about `[foo.Def]` polluting `[my_proc.Def]` or even `[foo.Def]` in a different call.
+
+However, if `foo!` is _unhygienic_ then the choice of `[foo.Call]` might matter a lot! Any new unhygienically defined resolvable items (variables, functions, traits, etc.) will appear in `[foo.Call]`. This is still unlikely to matter most of the time - if the caller of `my_proc` passed in an unhygienic macro they probably expected it to pollute the caller's scope and not the 'inside' of `my_proc`, and indeed by default `[foo.Call]` is set to `[my_proc.Call]`. But if you _do_ want a user-provided macro-call to modify your macro scope and not the caller scope, use `call_from`.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation

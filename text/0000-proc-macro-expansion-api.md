@@ -168,7 +168,7 @@ fn my_hygienic_macro(tokens: TokenStream) -> TokenStream {
 }
 ```
 
-Each token in a `TokenStream` has a span, and that span tracks where the token is treated as being created - you'll see why we keep on saying "treated as being created" rather than just "created'" in a little bit! In the above code sample,
+Each token in a `TokenStream` has a span, and that span tracks where the token is treated as being created - you'll see why we keep on saying "treated as being created" rather than just "created'" [later](#unhygienic-scopes)! In the above code sample,
 
 * The tokens in lines marked `[Def]` have spans with scopes that indicate they should be treated as though they were defined here in the definition of `my_hygienic_macro`.
 * The tokens in lines marked with `[Call]` keep their original spans and scopes, which in this case indicate they should be treated as though they were defined at the macro call site, wherever that is.
@@ -217,6 +217,8 @@ fn main() {
 
 This doesn't just stop at variable names. The above principles apply to mods, structs, trait definition, trait method calls, macros - anything with a name which needs to be looked up.
 
+### Unhygienic Scopes
+
 Importantly, macro hygiene is _optional_: since we can manipulate the spans on tokens, we can change how a variable is resolved. For example:
 
 ```rust
@@ -254,7 +256,7 @@ fn main() {
 }
 ```
 
-By changing the scope of the span of the tokens on line 4 (using `quote_spanned` instead of `quote`), that instance of `x` will resolve to the one defined on line 2 instead of line 1. In fact, the variable actually declared by our macro, on line 1, is never used.
+By changing the scope of the span of the tokens on line 4 (using `quote_spanned` instead of `quote`), that instance of `x` will resolve to the one defined on line 2 instead of line 1. In fact, the variable actually declared by our macro on line 1 is never used.
 
 This trick has a few uses, such as 'exporting' a name to the caller of the macro. If hygiene was not optional, any new functions or modules you created in a macro would only be resolvable in the same macro.
 
@@ -288,7 +290,7 @@ The method `expand` consumes the macro call, resolves the definition, applies it
 
 ### Calling Scopes
 
-The method `call_from` is a builder-pattern method to set what the calling scope is for the macro. What does this mean?
+The method `call_from` sets the calling scope for the macro. What does this mean?
 
 Say we are defining a macro `my_proc` and `my_proc` gets called with another macro `foo!` as input, perhaps as `my_proc!(foo!())`.
 
@@ -296,7 +298,7 @@ Recall that in a macro definition there are two scopes of interest: the caller s
 
 In most cases, `foo!` is hygienic and so the choice doesn't matter - wherever `foo!` is called, all of its new variables and modules and whatever will live in `[foo.Def]` independent of what `[foo.Call]` is. Additionally, for hygiene reasons, every call of every macro has a different `[Def]` scope, and so we don't have to worry about `[foo.Def]` polluting `[my_proc.Def]` or even `[foo.Def]` in a different call.
 
-However, if `foo!` is _unhygienic_ then the choice of `[foo.Call]` might matter a lot! Any new unhygienically defined resolvable items (variables, functions, traits, etc.) will appear in `[foo.Call]`. This is still unlikely to matter most of the time - if the caller of `my_proc` passed in an unhygienic macro they probably expected it to pollute the caller's scope and not the 'inside' of `my_proc`, and indeed by default `[foo.Call]` is set to `[my_proc.Call]`. But if you _do_ want a user-provided macro-call to modify your macro scope and not the caller scope, use `call_from`.
+However, if `foo!` is _unhygienic_ then the choice of `[foo.Call]` might matter a lot! Any new unhygienically defined resolvable items (variables, functions, traits, etc.) will appear in `[foo.Call]`. This is still unlikely to matter most of the time - if the caller of `my_proc` passed in an unhygienic macro they probably expected it to export names to the caller scope and not the 'inside' of `my_proc`, and indeed by default `[foo.Call]` is set to `[my_proc.Call]`. But if you _do_ want a user-provided macro-call to modify your macro scope and not the caller scope, use `call_from`.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation

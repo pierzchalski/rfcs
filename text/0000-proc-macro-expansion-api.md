@@ -203,21 +203,7 @@ fn main() {
 
 As you can see, the macro expansion has interleaved tokens provided by the caller (marked with `[Call]`) and tokens provided by the macro definition (marked with `[Def]`). 
 
-Different scopes (`[Call]`, `[Def]`) define different names. That means lines 1 and 2 above each define a variable named `x` but living in a different name resolution scope. This in turn means that the `x` defined in line 2 isn't shadowing the `x` defined in line 1, which is what would happen if these variables were all declared in a single scope.
-
-Scopes are also used to _resolve_ names. In lines 3 and 5 the variable `x` is in the `[Call]` scope, and so will resolve to the variable declared in line 2. Similarly, in line 4 the variable `x` is in the `[Def]` scope, and so will resolve to the variable declared in line 1. This also means mutating a variable in one scope doesn't mutate the variables in another, or shadow them, or interfere with name resolution. This is how Rust achieves macro hygiene.
-
-Letting `[Scope]x` be shorthand for "the variable `x` resolved in the scope `Scope`" we can trace the execution of `main`, seeing how scopes separate two otherwise indistinguishable variables with the same name:
-
-```rust
-fn main() {
-    let mut x = 0; // [Def]x = 0;
-    let mut x = 1; // [Call]x = 1;
-    x += 2;        // [Call]x = 3;
-    x += 1;        // [Def]x = 2;
-    println!(x);   // Prints [Call]x;
-}
-```
+Scopes are used to _resolve_ names. For example, in lines 3 and 5 the variable `x` is in the `[Call]` scope, and so will resolve to the variable declared in line 2. Similarly, in line 4 the variable `x` is in the `[Def]` scope, and so will resolve to the variable declared in line 1. Since the names in different _scopes_ resolve to different _variables_, this means mutating a variable in one scope doesn't mutate the variables in another, or shadow them, or interfere with name resolution. This is how Rust achieves macro hygiene!
 
 This doesn't just stop at variable names. The above principles apply to mods, structs, trait definition, trait method calls, macros - anything with a name which needs to be looked up.
 

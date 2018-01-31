@@ -170,7 +170,9 @@ fn my_hygienic_macro(tokens: TokenStream) -> TokenStream {
 }
 ```
 
-Each token in a `TokenStream` has a span, and that span tracks where the token is treated as being created - you'll see why we keep on saying "treated as being created" rather than just "created'" [later](#unhygienic-scopes)! In the above code sample,
+Each token in a `TokenStream` has a span, and that span tracks where the token is treated as being created - you'll see why we keep on saying "treated as being created" rather than just "created" [later](#unhygienic-scopes)!
+
+In the above code sample:
 
 * The tokens in lines marked `[Def]` have spans with scopes that indicate they should be treated as though they were defined here in the definition of `my_hygienic_macro`.
 * The tokens in lines marked with `[Call]` keep their original spans and scopes, which in this case indicate they should be treated as though they were defined at the macro call site, wherever that is.
@@ -331,27 +333,27 @@ This proposal:
 
 * Leads to frustrating corner-cases involving macro paths. For instance, consider the following:
 
-```rust
-macro baz!(...);
-foo! {
-    mod b {
-        super::baz!();
+    ```rust
+    macro baz!(...);
+    foo! {
+        mod b {
+            super::baz!();
+        }
     }
-}
-```
+    ```
 
-* The caller of `foo!` probably imagines that `baz!` will be expanded within `b`, and so prepends the call with `super`. However, if `foo!` naively calls `parse_expand` with this input then `super::baz!` will fail to resolve because macro paths are resolved relative to the location of the call. Handling this would require `parse_expand` to track the path offset of its expansion, which is doable but adds complexity.
+    The caller of `foo!` probably imagines that `baz!` will be expanded within `b`, and so prepends the call with `super`. However, if `foo!` naively calls `parse_expand` with this input then `super::baz!` will fail to resolve because macro paths are resolved relative to the location of the call. Handling this would require `parse_expand` to track the path offset of its expansion, which is doable but adds complexity.
 
 * Can't handle macros that are defined in the input, such as:
 
-```rust
-foo! {
-    macro bar!(...);
-    bar!(hello, world!);
-}
-```
+    ```rust
+    foo! {
+        macro bar!(...);
+        bar!(hello, world!);
+    }
+    ```
 
-* Handling this would require adding more machinery to `proc_macro`, something along the lines of `add_definition(scope, path, tokens)`. Is this necessary for a minimum viable proposal? 
+    Handling this would require adding more machinery to `proc_macro`, something along the lines of `add_definition(scope, path, tokens)`. Is this necessary for a minimum viable proposal? 
 
 # Rationale and alternatives
 [alternatives]: #alternatives
@@ -369,8 +371,8 @@ The details of the `MacroCall` API need more thought and discussion:
 
 * Do we need a separate configurable `Context` argument that specifies how scopes are resolved, combined with a `resolve_in(self, ctx: Context)` method?
 
-* Is `call_from` necessary? Are there any known uses, or could it be emulated by patching the spans of the called macro result?
+* Is `call_from` necessary? Are there any known uses, or could it be emulated by patching the spans of the called macro result? Would this be better served with a more flexible API around getting and setting span parents?
 
 * This API allows for a first-pass solution to the problems listed in [Motivation](#motivation). Does it interfere with any known uses of proc macros? Does it prevent any existing techniques from working or cut off potential future ones?
 
-* Are there any reasonable cases where someone can reasonably call a macro, but the resolution of that macro's path isn't possible until later?
+* Are there any reasonable cases where someone can call a macro, but the resolution of that macro's path isn't possible until after expansion?

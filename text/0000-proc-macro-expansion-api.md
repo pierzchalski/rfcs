@@ -15,57 +15,57 @@ There are a few places where proc macros may encounter unexpanded macros in thei
 
 * In attribute and procedural macros:
 
-```rust
-#[my_attr_macro(x = a_macro_call!(...))]
-//                  ^^^^^^^^^^^^^^^^^^
-// This call isn't expanded before being passed to `my_attr_macro`, and can't be
-// since attr macros are passed raw token streams by design.
-struct X {...}
-```
+    ```rust
+    #[my_attr_macro(x = a_macro_call!(...))]
+    //                  ^^^^^^^^^^^^^^^^^^
+    // This call isn't expanded before being passed to `my_attr_macro`, and can't be
+    // since attr macros are passed raw token streams by design.
+    struct X {...}
+    ```
 
-```rust
-my_proc_macro!(concat!("hello", "world"));
-//             ^^^^^^^^^^^^^^^^^^^^^^^^^
-// This call isn't expanded before being passed to `my_proc_macro`, and can't be
-// since proc macros are passed raw token streams by design.
-```
+    ```rust
+    my_proc_macro!(concat!("hello", "world"));
+    //             ^^^^^^^^^^^^^^^^^^^^^^^^^
+    // This call isn't expanded before being passed to `my_proc_macro`, and can't be
+    // since proc macros are passed raw token streams by design.
+    ```
 
 * In proc macros called with metavariables or token streams:
 
-```rust
-macro_rules! m {
-    ($($x:tt)*) => {
-        my_proc_macro!($($x)*);
-    },
-}
+    ```rust
+    macro_rules! m {
+        ($($x:tt)*) => {
+            my_proc_macro!($($x)*);
+        },
+    }
 
-m!(concat!("a", "b", "c"));
-// ^^^^^^^^^^^^^^^^^^^^^^
-// This call isn't expanded before being passed to `my_proc_macro`, and can't be
-// because `m!` is declared to take a token tree, not a parsed expression that we know
-// how to expand.
-```
+    m!(concat!("a", "b", "c"));
+    // ^^^^^^^^^^^^^^^^^^^^^^
+    // This call isn't expanded before being passed to `my_proc_macro`, and can't be
+    // because `m!` is declared to take a token tree, not a parsed expression that we know
+    // how to expand.
+    ```
 
 In these situations, proc macros need to either re-call the input macro call as part of their token output, or simply reject the input. If the proc macro needs to inspect the result of the macro call (for instance, to check or edit it, or to re-export a hygienic symbol defined in it), the author is currently unable to do so. This implies an additional place where a proc macro might encounter an unexpanded macro call, by _constructing_ it:
 
 * In a proc macro definition:
 
-```rust
-#[proc_macro]
-fn my_proc_macro(tokens: TokenStream) -> TokenStream {
-    let token_args = extract_from(tokens);
+    ```rust
+    #[proc_macro]
+    fn my_proc_macro(tokens: TokenStream) -> TokenStream {
+        let token_args = extract_from(tokens);
     
-    // These arguments are a token stream, but they will be passed to `another_macro!`
-    // after being parsed as whatever `another_macro!` expects.
-    //                                                  vvvvvvvvvv
-    let other_tokens = some_other_crate::another_macro!(token_args);
-    //                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    // This call gets expanded into whatever `another_macro` expects to be expanded
-    // as. There is currently no way to get the resulting tokens without requiring the
-    // macro result to compile in the same crate as `my_proc_macro`.
-    ...
-}
-```
+        // These arguments are a token stream, but they will be passed to `another_macro!`
+        // after being parsed as whatever `another_macro!` expects.
+        //                                                  vvvvvvvvvv
+        let other_tokens = some_other_crate::another_macro!(token_args);
+        //                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        // This call gets expanded into whatever `another_macro` expects to be expanded
+        // as. There is currently no way to get the resulting tokens without requiring the
+        // macro result to compile in the same crate as `my_proc_macro`.
+        ...
+    }
+    ```
 
 Giving proc macro authors the ability to handle these situations will allow proc macros to 'just work' in more contexts, and without surprising users who expect macro calls to interact well with more parts of the language. Additionally, supporting the 'proc macro definition' use case above allows proc macro authors to use macros from other crates _as macros_, rather than as proc macro definition functions.
 
@@ -224,12 +224,12 @@ fn my_unhygienic_macro(tokens: TokenStream) -> TokenStream {
         let mut x = 0; // [Def]
     };
     let unhygienic = quote_spanned! { Span::call_site(),
-        x += 1;
+        x += 1;        // [Call]
     };
     quote! {
-        #hygienic   // [Def]
-        #tokens     // [Call]
-        #unhygienic // [Call]
+        #hygienic      // [Def]
+        #tokens        // [Call]
+        #unhygienic    // [Call]
     }
 }
 ```
@@ -285,13 +285,28 @@ The method `expand` consumes the macro call, resolves the definition, applies it
 
 The method `call_from` sets the calling scope for the macro. What does this mean?
 
-Say we are defining a macro `my_proc` and `my_proc` gets called with another macro `foo!` as input, perhaps as `my_proc!(foo!())`.
+Say we are defining a macro `my_proc!` and want to use another macro `helper!` as part of `my_proc!`. If `helper!` is hygienic, then all of its new variables and modules and whatever will live in its own `[Def]` scope independent the `[Def]` scope of `my_proc!`.
 
-Recall that in a macro definition there are two scopes of interest: the caller site (produced with `Span::call_site()` and annotated in this chapter with `[Call]`), and the macro definition site (produced with `Span::def_site()` and annotated with `[Def]`). Change how we mark the original caller scope from just `[Call]` to `[my_proc.Call]` and the definition scope to `[my_proc.Def]`. Mark the equivalent scopes for `foo` as `[foo.Call]` and `[foo.Def]`. Now should `[foo.Call]` be the same as `[my_proc.Call]` or `[my_proc.Def]`? Phrased differently, should we treat `foo` as called 'within' `my_proc`, or as being called separately where `my_proc` was called from?
+If `helper!` is _unhygienic_ then any unhygienic declarations will live in the `[Call]` scope of `helper!` - but which scope is that? Assume that `helper!` expands to something like this:
 
-In most cases, `foo!` is hygienic and so the choice doesn't matter - wherever `foo!` is called, all of its new variables and modules and whatever will live in `[foo.Def]` independent of what `[foo.Call]` is. Additionally, for hygiene reasons, every call of every macro has a different `[Def]` scope, and so we don't have to worry about `[foo.Def]` polluting `[my_proc.Def]` or even `[foo.Def]` in a different call.
+```rust
+struct S; // [Def]
+struct T; // [Call]
 
-However, if `foo!` is _unhygienic_ then the choice of `[foo.Call]` might matter a lot! Any new unhygienically defined resolvable items (variables, functions, traits, etc.) will appear in `[foo.Call]`. This is still unlikely to matter most of the time - if the caller of `my_proc` passed in an unhygienic macro they probably expected it to export names to the caller scope and not the 'inside' of `my_proc`, and indeed by default `[foo.Call]` is set to `[my_proc.Call]`. But if you _do_ want a user-provided macro-call to modify your macro scope and not the caller scope, use `call_from`.
+// [Call]
+//   v
+impl T {
+    // These implementation functions can refer to S because
+    // they're in the same scope
+    ... // [Def]
+}
+```
+
+* If the `[Call]` scope of `helper!` is the `[Def]` scope of `my_proc!`, then `helper!` will 'export' or 'expose' the declaration of `T` to `my_proc!`, which lets `my_proc!` refer to `T`. This lets us delegate part of the implementation of `my_proc!` to other proc and decl macros (perhaps from other crates).
+
+* If instead the `[Call]` scope of `helper!` is the `[Call]` scope of `my_proc!`, then `helper!` will export the declarations to the caller of `my_proc!` instead of `my_proc!`. If we don't need access to `T` and just want to export it straight to the caller of `my_proc!` (or if `helper!` is actually just part of the caller's input to `my_proc!`, like `my_proc!(helper!(...))`) then this is what we want.
+
+Since both of these are legitimate use cases, `MacroCall` provides `call_from` to set what the `[Call]` scope of the macro call will be.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation

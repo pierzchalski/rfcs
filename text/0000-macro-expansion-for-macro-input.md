@@ -322,15 +322,15 @@ definitions](#delayed-definitions) and [paths within nested
 macros](#paths-within-nested-macros).
 
 This is more subtle than it might appear at first glance. An advanced
-implementation needs to account for the fact that macro definitions ca vary
-during expansion (see [appendix B](#appendix-b)). In fact, expansions
-can be mutually-dependent *between* nested eager macros (see [appendix
+implementation needs to account for the fact that macro definitions can vary
+during expansion (see [appendix B](#appendix-b)). In fact, expansions can be
+mutually-dependent *between* nested eager macros (see [appendix
 C](#appendix-c)).
 
 A guiding principle here is that, as much as possible, the result of eager
 expansion shouldn't depend on the *order* that macros are expanded. This makes
 expansion resilient to changes in the compiler's expansion process, and avoids
-unexpected and desirable behaviour like being source-order dependent.
+unexpected and undesirable behaviour like being source-order dependent.
 Additionally, the existing macro expansion process *mostly* has this property
 and we should aim to maintain it.
 
@@ -339,8 +339,8 @@ behaviour described in the appendices (perhaps by producing an error whenever
 such a situation is detected).
 
 # Rationale and alternatives
-The primary rationale is to make procedural and attribute macros work more
-smoothly with other features of Rust - mainly other macros.
+The primary rationale is to make user-defined macros work more smoothly with
+other features of Rust - mainly other macros.
 
 ## Alternative: third-party expansion libraries
 We could encourage the creation of a 'macros for macro authors' crate with
